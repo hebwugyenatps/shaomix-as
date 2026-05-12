@@ -1511,6 +1511,7 @@
                     <select id="proxyUpstream">
                         <option value="https://api.asxs.top">渠道1</option>
                         <option value="https://6696996.xyz">渠道2</option>
+                        <option value="https://chat.aiprox.net">渠道3</option>
                     </select>
                 </div>
                 <div class="form-group">
@@ -1836,7 +1837,8 @@
             const PRESET_IMAGE_SIZES = imageSizeOptionButtons.map(option => option.dataset.size);
             const PROXY_UPSTREAM_LABELS = {
                 'https://api.asxs.top': '渠道1',
-                'https://6696996.xyz': '渠道2'
+                'https://6696996.xyz': '渠道2',
+                'https://chat.aiprox.net': '渠道3'
             };
             function getProxyUpstreamLabel(value) {
                 return PROXY_UPSTREAM_LABELS[value] || (value ? '未识别渠道' : '未选择');
