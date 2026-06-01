@@ -1508,11 +1508,7 @@
                         Proxy Upstream
                         <span class="label-tip">Base URL 使用本地代理时，选择实际转发到哪个上游</span>
                     </label>
-                    <select id="proxyUpstream">
-                        <option value="https://api.asxs.top">渠道1</option>
-                        <option value="https://6696996.xyz">渠道2</option>
-                        <option value="https://chat.aiprox.net">渠道3</option>
-                    </select>
+                    <select id="proxyUpstream"></select>
                 </div>
                 <div class="form-group">
                     <label for="apiEndpoint">
@@ -1835,11 +1831,20 @@
             const imageSizeDropdownMenu = document.getElementById('imageSizeDropdownMenu');
             const imageSizeOptionButtons = Array.from(imageSizeDropdownMenu.querySelectorAll('.size-option'));
             const PRESET_IMAGE_SIZES = imageSizeOptionButtons.map(option => option.dataset.size);
-            const PROXY_UPSTREAM_LABELS = {
-                'https://api.asxs.top': '渠道1',
-                'https://6696996.xyz': '渠道2',
-                'https://chat.aiprox.net': '渠道3'
-            };
+            const PROXY_CHANNELS = [
+                { label: '渠道1', upstream: 'https://api.asxs.top' },
+                { label: '渠道2', upstream: 'https://sub2api.yuepa8.com' },
+                { label: '渠道3', upstream: 'https://chat.aiprox.net' },
+                { label: '渠道4', upstream: 'https://api.laogou.xyz' },
+                { label: '渠道5', upstream: 'https://aihub2api.cloud' }
+            ];
+            const DEFAULT_PROXY_UPSTREAM = PROXY_CHANNELS[0]?.upstream || '';
+            const PROXY_UPSTREAM_LABELS = Object.fromEntries(
+                PROXY_CHANNELS.map(channel => [channel.upstream, channel.label])
+            );
+            proxyUpstream.innerHTML = PROXY_CHANNELS
+                .map(channel => `<option value="${escapeHtml(channel.upstream)}">${escapeHtml(channel.label)}</option>`)
+                .join('');
             function getProxyUpstreamLabel(value) {
                 return PROXY_UPSTREAM_LABELS[value] || (value ? '未识别渠道' : '未选择');
             }
@@ -2454,7 +2459,7 @@
                     const displayBaseUrl = params.baseUrl || '';
                     const displayApiEndpoint = params.apiEndpoint || '';
                     const displayImageSize = params.imageSize || '';
-                    const displayCallCore = getProxyUpstreamLabel(params.proxyUpstream || 'https://api.asxs.top');
+                    const displayCallCore = getProxyUpstreamLabel(params.proxyUpstream || DEFAULT_PROXY_UPSTREAM);
                     historyDetailParams.innerHTML = `
                         <div class="history-detail-param-group">
                             <div class="history-detail-param-label">调用核心</div>
@@ -2541,7 +2546,7 @@
                     // 1. 加载基础参数
                     if (params.apiKey) apiKey.value = params.apiKey;
                     baseUrl.value = params.baseUrl || 'http://localhost:8791/v1';
-                    proxyUpstream.value = params.proxyUpstream || 'https://api.asxs.top';
+                    proxyUpstream.value = params.proxyUpstream || DEFAULT_PROXY_UPSTREAM;
                     apiEndpoint.value = params.apiEndpoint || '/responses';
                     const savedImageSize = params.imageSize || '1024x1792';
                     ensureSelectOption(modelType, params.modelType);
@@ -3411,7 +3416,7 @@
                 if (confirm('确定要重置所有参数和已上传的图片吗？')) {
                     apiKey.value = '';
                     baseUrl.value = 'http://localhost:8791/v1';
-                    proxyUpstream.value = 'https://api.asxs.top';
+                    proxyUpstream.value = DEFAULT_PROXY_UPSTREAM;
                     apiEndpoint.value = '/responses';
                     modelType.value = 'gpt-5.5';
                     imageModel.value = 'gpt-image-2';
