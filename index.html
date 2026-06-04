@@ -1836,7 +1836,8 @@
                 { label: '渠道2', upstream: 'https://sub2api.yuepa8.com' },
                 { label: '渠道3', upstream: 'https://chat.aiprox.net' },
                 { label: '渠道4', upstream: 'https://api.laogou.xyz' },
-                { label: '渠道5', upstream: 'https://aihub2api.cloud' }
+                { label: '渠道5', upstream: 'https://aihub2api.cloud' },
+                { label: '渠道6', upstream: 'https://ccccapi.cc' }
             ];
             const DEFAULT_PROXY_UPSTREAM = PROXY_CHANNELS[0]?.upstream || '';
             const PROXY_UPSTREAM_LABELS = Object.fromEntries(
@@ -1848,6 +1849,14 @@
             function getProxyUpstreamLabel(value) {
                 return PROXY_UPSTREAM_LABELS[value] || (value ? '未识别渠道' : '未选择');
             }
+            const REFERENCE_IMAGE_JPEG_MIME = 'image/jpeg';
+            const REFERENCE_IMAGE_JPEG_QUALITY = 0.95;
+            const REFERENCE_IMAGE_MAX_BYTES = 500 * 1024;
+            const REFERENCE_IMAGE_MAX_PIXELS = 2560 * 1440;
+            let imageUploadQueue = Promise.resolve();
+            let pendingReferenceImageCount = 0;
+            let referenceImageBatchToken = 0;
+            let referenceImageSessionToken = 0;
             let suppressImageSizeFocusOpen = false;
             const prompt = document.getElementById('prompt');
             const uploadArea = document.getElementById('uploadArea');
@@ -2559,6 +2568,8 @@
                     retryDelay.value = params.retryDelay || '2000';
                     
                     // 2. 加载参考图（使用record中完整数据）
+                    referenceImageSessionToken += 1;
+                    pendingReferenceImageCount = 0;
                     uploadedImages = [];
                     if (record.referenceImages && record.referenceImages.length > 0) {
                         record.referenceImages.forEach(img => {
@@ -3204,6 +3215,8 @@
                 maxImageCount.textContent = currentMaxImages;
                 updateImageCount();
                 if (uploadedImages.length > currentMaxImages) {
+                    referenceImageSessionToken += 1;
+                    pendingReferenceImageCount = 0;
                     uploadedImages = uploadedImages.slice(0, currentMaxImages);
                     renderImageList();
                 }
@@ -3314,9 +3327,183 @@
                 consoleLog('info', `【用户操作】文件选择器上传图片，共${fileInput.files.length}个文件`);
                 fileInput.value = '';
             });
+
+            function readBlobAsDataUrl(blob) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        if (typeof reader.result === 'string') {
+                            resolve(reader.result);
+                            return;
+                        }
+                        reject(new Error('图片读取失败：FileReader结果格式异常'));
+                    };
+                    reader.onerror = () => reject(new Error('图片读取失败：FileReader读取异常'));
+                    reader.readAsDataURL(blob);
+                });
+            }
+
+            function loadImageFromBlob(blob) {
+                return new Promise((resolve, reject) => {
+                    const image = new Image();
+                    const objectUrl = URL.createObjectURL(blob);
+                    image.onload = () => {
+                        URL.revokeObjectURL(objectUrl);
+                        resolve(image);
+                    };
+                    image.onerror = () => {
+                        URL.revokeObjectURL(objectUrl);
+                        reject(new Error('图片解码失败，无法处理该图片'));
+                    };
+                    image.src = objectUrl;
+                });
+            }
+
+            function canvasToJpegBlob(canvas) {
+                return new Promise((resolve, reject) => {
+                    canvas.toBlob((blob) => {
+                        if (!blob) {
+                            reject(new Error('图片转换JPG失败：浏览器未返回有效数据'));
+                            return;
+                        }
+                        resolve(blob);
+                    }, REFERENCE_IMAGE_JPEG_MIME, REFERENCE_IMAGE_JPEG_QUALITY);
+                });
+            }
+
+            function getReferenceImageTargetSize(width, height, shouldLimitPixels) {
+                const safeWidth = Math.max(1, width);
+                const safeHeight = Math.max(1, height);
+                if (!shouldLimitPixels || safeWidth * safeHeight <= REFERENCE_IMAGE_MAX_PIXELS) {
+                    return { width: safeWidth, height: safeHeight, scaled: false };
+                }
+                const ratio = Math.sqrt(REFERENCE_IMAGE_MAX_PIXELS / (safeWidth * safeHeight));
+                return {
+                    width: Math.max(1, Math.floor(safeWidth * ratio)),
+                    height: Math.max(1, Math.floor(safeHeight * ratio)),
+                    scaled: true
+                };
+            }
+
+            function isJpegImageFile(file) {
+                const type = String(file.type || '').toLowerCase();
+                const name = String(file.name || '').toLowerCase();
+                if (type) return type === 'image/jpeg' || type === 'image/jpg';
+                return /\.(jpe?g)$/.test(name);
+            }
+
+            async function encodeImageElementToJpeg(image, targetSize) {
+                const canvas = document.createElement('canvas');
+                canvas.width = targetSize.width;
+                canvas.height = targetSize.height;
+                const ctx = canvas.getContext('2d');
+                if (!ctx) {
+                    throw new Error('图片处理失败：浏览器不支持Canvas 2D上下文');
+                }
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = 'high';
+                ctx.drawImage(image, 0, 0, targetSize.width, targetSize.height);
+                const blob = await canvasToJpegBlob(canvas);
+                return { blob, width: targetSize.width, height: targetSize.height, scaled: targetSize.scaled };
+            }
+
+            async function processReferenceImageFile(file) {
+                const normalizedFileName = file.name
+                    ? file.name.replace(/\.[^.]*$/, '') + '.jpg'
+                    : 'reference-image.jpg';
+                const fileIsJpeg = isJpegImageFile(file);
+                const createImageResult = async (blob, logMessage) => {
+                    const base64Url = await readBlobAsDataUrl(blob);
+                    const commaIndex = base64Url.indexOf(',');
+                    if (commaIndex === -1) {
+                        throw new Error('图片读取失败：Base64结果格式异常');
+                    }
+                    consoleLog('success', logMessage);
+                    return {
+                        name: normalizedFileName,
+                        mime_type: REFERENCE_IMAGE_JPEG_MIME,
+                        base64: base64Url.slice(commaIndex + 1),
+                        url: `data:${REFERENCE_IMAGE_JPEG_MIME};base64,${base64Url.slice(commaIndex + 1)}`
+                    };
+                };
+                if (fileIsJpeg && file.size <= REFERENCE_IMAGE_MAX_BYTES) {
+                    return await createImageResult(
+                        file,
+                        `图片 ${file.name} 保持JPG格式，大小：${(file.size / 1024).toFixed(2)}KB，小于500KB，无需缩放`
+                    );
+                }
+
+                const image = await loadImageFromBlob(file);
+                const originalSize = {
+                    width: Math.max(1, image.naturalWidth),
+                    height: Math.max(1, image.naturalHeight),
+                    scaled: false
+                };
+                if (fileIsJpeg && originalSize.width * originalSize.height <= REFERENCE_IMAGE_MAX_PIXELS) {
+                    return await createImageResult(
+                        file,
+                        `图片 ${file.name} 保持JPG格式，大小：${(file.size / 1024).toFixed(2)}KB，原始尺寸${originalSize.width}x${originalSize.height}（2K像素以内），无需缩放`
+                    );
+                }
+
+                let processed;
+                if (fileIsJpeg && file.size > REFERENCE_IMAGE_MAX_BYTES) {
+                    const targetSize = getReferenceImageTargetSize(originalSize.width, originalSize.height, true);
+                    processed = await encodeImageElementToJpeg(image, targetSize);
+                } else {
+                    processed = await encodeImageElementToJpeg(image, originalSize);
+                    if (
+                        originalSize.width * originalSize.height > REFERENCE_IMAGE_MAX_PIXELS &&
+                        processed.blob.size > REFERENCE_IMAGE_MAX_BYTES
+                    ) {
+                        const targetSize = getReferenceImageTargetSize(originalSize.width, originalSize.height, true);
+                        processed = await encodeImageElementToJpeg(image, targetSize);
+                    }
+                }
+                const base64Url = await readBlobAsDataUrl(processed.blob);
+                const commaIndex = base64Url.indexOf(',');
+                if (commaIndex === -1) {
+                    throw new Error('图片转换JPG失败：Base64结果格式异常');
+                }
+                const sizeInfo = `${(processed.blob.size / 1024).toFixed(2)}KB`;
+                const scaleInfo = processed.scaled
+                    ? `，已等比缩放至${processed.width}x${processed.height}（2K像素以内）`
+                    : `，尺寸${processed.width}x${processed.height}`;
+                consoleLog('success', `图片 ${file.name} 处理完成，格式：image/jpeg，质量：0.95，大小：${sizeInfo}${scaleInfo}`);
+                return {
+                    name: normalizedFileName,
+                    mime_type: REFERENCE_IMAGE_JPEG_MIME,
+                    base64: base64Url.slice(commaIndex + 1),
+                    url: base64Url
+                };
+            }
+
+            async function normalizeUploadedReferenceImages() {
+                await waitForPendingReferenceImages();
+                let changed = false;
+                for (let i = 0; i < uploadedImages.length; i++) {
+                    const img = uploadedImages[i];
+                    const dataUrl = `data:${img.mime_type};base64,${img.base64}`;
+                    const blob = await fetch(dataUrl).then(response => response.blob());
+                    if (img.mime_type === REFERENCE_IMAGE_JPEG_MIME) {
+                        if (blob.size <= REFERENCE_IMAGE_MAX_BYTES) continue;
+                        const image = await loadImageFromBlob(blob);
+                        if (image.naturalWidth * image.naturalHeight <= REFERENCE_IMAGE_MAX_PIXELS) continue;
+                    }
+                    const file = new File([blob], img.name || `reference-${i + 1}.jpg`, { type: img.mime_type || blob.type });
+                    uploadedImages[i] = await processReferenceImageFile(file);
+                    changed = true;
+                }
+                if (changed) {
+                    renderImageList();
+                    updateImageCount();
+                    consoleLog('success', '已将旧参考图数据统一转换为JPG格式');
+                }
+            }
+
             function handleImageFiles(files) {
                 if (!files.length) return;
-                const remainingSlots = currentMaxImages - uploadedImages.length;
+                const remainingSlots = currentMaxImages - uploadedImages.length - pendingReferenceImageCount;
                 if (remainingSlots <= 0) {
                     const msg = `已达到最大上传数量（${currentMaxImages}张），无法继续上传`;
                     showError(msg);
@@ -3325,26 +3512,62 @@
                 }
                 const filesToProcess = Array.from(files).slice(0, remainingSlots);
                 consoleLog('info', `准备处理 ${filesToProcess.length} 张图片`);
-                filesToProcess.forEach((file) => {
-                    if (!file.type.startsWith('image/')) {
-                        const msg = `文件 ${file.name} 不是有效的图片格式`;
-                        showError(msg);
-                        consoleLog('warning', msg);
-                        return;
-                    }
-                    const reader = new FileReader();
-                    reader.onload = (e) => {
-                        const base64Url = e.target.result;
-                        const [header, data] = base64Url.split(',');
-                        const mime_type = header.match(/data:(.*?);base64/)[1];
-                        uploadedImages.push({ name: file.name, mime_type: mime_type, base64: data, url: base64Url });
-                        consoleLog('success', `图片 ${file.name} 加载完成，大小：${(file.size / 1024).toFixed(2)}KB，格式：${mime_type}`);
-                        renderImageList();
-                        updateImageCount();
-                    };
-                    reader.readAsDataURL(file);
-                });
+                const batchToken = ++referenceImageBatchToken;
+                const sessionToken = referenceImageSessionToken;
+                pendingReferenceImageCount += filesToProcess.length;
+                updateImageCount();
+                imageUploadQueue = imageUploadQueue
+                    .catch(() => {})
+                    .then(async () => {
+                        for (const file of filesToProcess) {
+                            try {
+                                if (sessionToken !== referenceImageSessionToken) {
+                                    continue;
+                                }
+                                if (uploadedImages.length >= currentMaxImages) {
+                                    consoleLog('warning', `图片 ${file.name} 未添加：已达到最大上传数量（${currentMaxImages}张）`);
+                                    continue;
+                                }
+                                if (!file.type.startsWith('image/') && !isJpegImageFile(file)) {
+                                    const msg = `文件 ${file.name} 不是有效的图片格式`;
+                                    showError(msg);
+                                    consoleLog('warning', msg);
+                                    continue;
+                                }
+                                const processedImage = await processReferenceImageFile(file);
+                                if (sessionToken !== referenceImageSessionToken) {
+                                    continue;
+                                }
+                                uploadedImages.push(processedImage);
+                                renderImageList();
+                                updateImageCount();
+                            } catch (error) {
+                                const msg = `图片 ${file.name} 处理失败：${error.message}`;
+                                showError(msg);
+                                consoleLog('error', msg, error);
+                            } finally {
+                                if (sessionToken === referenceImageSessionToken) {
+                                    pendingReferenceImageCount = Math.max(0, pendingReferenceImageCount - 1);
+                                    updateImageCount();
+                                }
+                            }
+                        }
+                        if (sessionToken === referenceImageSessionToken && batchToken === referenceImageBatchToken) {
+                            consoleLog('success', `本批参考图处理完成，当前共 ${uploadedImages.length} 张`);
+                        }
+                    })
+                    .finally(() => {
+                        if (sessionToken === referenceImageSessionToken) {
+                            pendingReferenceImageCount = Math.max(0, pendingReferenceImageCount);
+                            updateImageCount();
+                        }
+                    });
             }
+            async function waitForPendingReferenceImages() {
+                if (pendingReferenceImageCount <= 0) return;
+                consoleLog('info', `等待 ${pendingReferenceImageCount} 张参考图处理完成后再发送请求`);
+                await imageUploadQueue;
+                    }
             // 图片列表渲染
             function renderImageList() {
                 imageList.innerHTML = '';
@@ -3406,7 +3629,9 @@
             // 图片计数更新
             function updateImageCount() {
                 const count = uploadedImages.length;
-                imageCount.textContent = `已上传 ${count} 张图片`;
+                imageCount.textContent = pendingReferenceImageCount > 0
+                    ? `已上传 ${count} 张图片，正在处理 ${pendingReferenceImageCount} 张`
+                    : `已上传 ${count} 张图片`;
                 imageCount.className = 'image-count';
                 if (count >= currentMaxImages) imageCount.classList.add('danger');
                 else if (count >= currentMaxImages - 2) imageCount.classList.add('warning');
@@ -3427,6 +3652,8 @@
                     timeoutSeconds.value = '60';
                     retryDelay.value = '2000';
                     
+                    referenceImageSessionToken += 1;
+                    pendingReferenceImageCount = 0;
                     uploadedImages = [];
                     renderImageList();
                     updateImageCount();
@@ -3666,6 +3893,24 @@
                     consoleLog('error', error.message, error);
                     return;
                 }
+                isGenerating = true;
+                generateBtn.disabled = true;
+                loadingIcon.style.display = 'inline-block';
+                previewLoading.style.display = 'block';
+                previewStatus.textContent = pendingReferenceImageCount > 0 ? '正在处理参考图...' : '准备生成中...';
+                try {
+                    await normalizeUploadedReferenceImages();
+                } catch (error) {
+                    const msg = `参考图处理未完成：${error.message}`;
+                    showError(msg);
+                    consoleLog('error', msg, error);
+                    isGenerating = false;
+                    generateBtn.disabled = false;
+                    loadingIcon.style.display = 'none';
+                    previewLoading.style.display = 'none';
+                    previewStatus.textContent = '参考图处理失败';
+                    return;
+                }
                 consoleLog('info', '【用户操作】点击生成按钮，开始参数校验，所有必填项校验通过');
                 
                 // ==================== 生成参数快照 ====================
@@ -3694,9 +3939,6 @@
                 resetPreviewArea();
                 errorArea.classList.remove('show');
                 
-                isGenerating = true;
-                generateBtn.disabled = true;
-                loadingIcon.style.display = 'inline-block';
                 previewLoading.style.display = 'block';
                 previewStatus.textContent = '正在生成中...';
                 consoleLog('info', '========== 开始新的生成请求 ==========');
