@@ -1501,7 +1501,7 @@
                         Base URL
                         <span class="label-tip">API服务基础地址，最终请求地址将与端点拼接</span>
                     </label>
-                    <input type="url" id="baseUrl" placeholder="http://localhost:8791/v1" value="http://localhost:8791/v1" required>
+                    <input type="url" id="baseUrl" placeholder="http://localhost:8792/v1" value="http://localhost:8792/v1" required>
                 </div>
                 <div class="form-group">
                     <label for="proxyUpstream">
@@ -2554,7 +2554,7 @@
                     const params = record.params || {};
                     // 1. 加载基础参数
                     if (params.apiKey) apiKey.value = params.apiKey;
-                    baseUrl.value = params.baseUrl || 'http://localhost:8791/v1';
+                    baseUrl.value = params.baseUrl || 'http://localhost:8792/v1';
                     proxyUpstream.value = params.proxyUpstream || DEFAULT_PROXY_UPSTREAM;
                     apiEndpoint.value = params.apiEndpoint || '/responses';
                     const savedImageSize = params.imageSize || '1024x1792';
@@ -3640,7 +3640,7 @@
             resetBtn.addEventListener('click', () => {
                 if (confirm('确定要重置所有参数和已上传的图片吗？')) {
                     apiKey.value = '';
-                    baseUrl.value = 'http://localhost:8791/v1';
+                    baseUrl.value = 'http://localhost:8792/v1';
                     proxyUpstream.value = DEFAULT_PROXY_UPSTREAM;
                     apiEndpoint.value = '/responses';
                     modelType.value = 'gpt-5.5';
